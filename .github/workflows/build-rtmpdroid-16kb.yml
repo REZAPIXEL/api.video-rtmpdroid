@@ -24,28 +24,12 @@ jobs:
         run: |
           yes | sdkmanager "ndk;28.0.13004108" "cmake;3.22.1"
 
-      # ⭐ مهم: خیلی از پروژه‌ها داخل build.gradle خودشون ndkVersion=26 گذاشتن.
-      # این step همون رو به 28 تغییر می‌ده تا Gradle دوباره 26 نصب نکنه.
-      - name: Force Gradle ndkVersion to r28
-        run: |
-          set -eux
-          echo "---- Before ----"
-          grep -R --line-number "ndkVersion" . || true
-
-          find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
-            sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\'']26\.[0-9.]*["'\'']/ndkVersion = "28.0.13004108"/g' "$f" || true
-            sed -i 's/ndkVersion[[:space:]]*["'\'']26\.[0-9.]*["'\'']/ndkVersion "28.0.13004108"/g' "$f" || true
-          done
-
-          echo "---- After ----"
-          grep -R --line-number "ndkVersion" . || true
-
       - name: Build Release AAR
         run: |
           chmod +x gradlew
           ./gradlew :lib:assembleRelease --no-daemon --stacktrace
           echo "---- AAR outputs ----"
-          ls -lah lib/build/outputs/aar || true
+          ls -lah lib/build/outputs/aar
 
       - name: Prepare artifact
         run: |
