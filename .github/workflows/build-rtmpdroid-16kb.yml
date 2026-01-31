@@ -1,0 +1,41 @@
+name: build-rtmpdroid-16kb
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK + CMake
+        run: |
+          sdkmanager "ndk;28.0.13004108" "cmake;3.22.1"
+
+      - name: Build AAR (Release)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.0.13004108
+        run: |
+          chmod +x gradlew
+          ./gradlew :lib:assembleRelease
+          ls -la lib/build/outputs/aar
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p out
+          cp lib/build/outputs/aar/*release*.aar out/rtmpdroid-1.2.1.aar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtmpdroid-1.2.1-16kb
+          path: out/rtmpdroid-1.2.1.aar
