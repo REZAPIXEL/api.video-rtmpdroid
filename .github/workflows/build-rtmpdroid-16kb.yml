@@ -17,22 +17,41 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK + CMake
-        run: |
-          sdkmanager "ndk;28.0.13004108" "cmake;3.22.1"
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
 
-      - name: Build AAR (Release)
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.0.13004108
+      - name: Install NDK r28 + CMake
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "cmake;3.22.1"
+
+      # ⭐ مهم: خیلی از پروژه‌ها داخل build.gradle خودشون ndkVersion=26 گذاشتن.
+      # این step همون رو به 28 تغییر می‌ده تا Gradle دوباره 26 نصب نکنه.
+      - name: Force Gradle ndkVersion to r28
+        run: |
+          set -eux
+          echo "---- Before ----"
+          grep -R --line-number "ndkVersion" . || true
+
+          find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
+            sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\'']26\.[0-9.]*["'\'']/ndkVersion = "28.0.13004108"/g' "$f" || true
+            sed -i 's/ndkVersion[[:space:]]*["'\'']26\.[0-9.]*["'\'']/ndkVersion "28.0.13004108"/g' "$f" || true
+          done
+
+          echo "---- After ----"
+          grep -R --line-number "ndkVersion" . || true
+
+      - name: Build Release AAR
         run: |
           chmod +x gradlew
-          ./gradlew :lib:assembleRelease
-          ls -la lib/build/outputs/aar
+          ./gradlew :lib:assembleRelease --no-daemon --stacktrace
+          echo "---- AAR outputs ----"
+          ls -lah lib/build/outputs/aar || true
 
       - name: Prepare artifact
         run: |
           mkdir -p out
           cp lib/build/outputs/aar/*release*.aar out/rtmpdroid-1.2.1.aar
+          ls -lah out
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
