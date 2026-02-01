@@ -41,11 +41,33 @@ jobs:
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
           echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
           echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
           echo "CMAKE_DIR=${ANDROID_SDK_ROOT}/cmake/3.22.1" >> $GITHUB_ENV
 
-      # ✅ مهم‌ترین اصلاح: ساخت local.properties تا AGP/CMake دقیق NDK/CMake را پیدا کند
+      # ✅ مهم‌ترین فیکس: حذف mismatch نسخه ndkVersion/ android.ndkVersion
+      - name: Force NDK version to 28 everywhere (no commit)
+        run: |
+          set -eux
+
+          echo "---- BEFORE: occurrences ----"
+          grep -R --line-number -E "ndkVersion|android\.ndkVersion" . || true
+
+          # 1) gradle.properties: android.ndkVersion=26.1.10909125
+          find . -name "gradle.properties" -print0 | while IFS= read -r -d '' f; do
+            sed -i 's/^android\.ndkVersion=.*/android.ndkVersion=28.0.13004108/g' "$f" || true
+          done
+
+          # 2) build.gradle / build.gradle.kts: ndkVersion "26.x"  یا ndkVersion = "26.x"
+          find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
+            # Groovy DSL: ndkVersion "26.1.10909125" or '26.1...'
+            sed -i 's/ndkVersion[[:space:]]*["'\''"]26\.[0-9.]*["'\''"]/ndkVersion "28.0.13004108"/g' "$f" || true
+            # Kotlin DSL: ndkVersion = "26.1.10909125"
+            sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\''"]26\.[0-9.]*["'\''"]/ndkVersion = "28.0.13004108"/g' "$f" || true
+          done
+
+          echo "---- AFTER: occurrences ----"
+          grep -R --line-number -E "ndkVersion|android\.ndkVersion" . || true
+
       - name: Create local.properties (force sdk/ndk/cmake)
         run: |
           cat > local.properties <<EOF
@@ -55,7 +77,7 @@ jobs:
           EOF
           cat local.properties
 
-      - name: Build Release AAR (forced injected dirs)
+      - name: Build Release AAR
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
           NINJAFLAGS: "-j2"
@@ -64,10 +86,7 @@ jobs:
           chmod +x gradlew
           ./gradlew :lib:assembleRelease \
             --no-daemon --stacktrace --info \
-            -Dorg.gradle.workers.max=2 \
-            -Pandroid.injected.sdk.dir="${ANDROID_SDK_ROOT}" \
-            -Pandroid.injected.ndk.dir="${ANDROID_SDK_ROOT}/ndk/28.0.13004108" \
-            -Pandroid.injected.cmake.dir="${ANDROID_SDK_ROOT}/cmake/3.22.1"
+            -Dorg.gradle.workers.max=2
 
       - name: Prepare artifact
         run: |
