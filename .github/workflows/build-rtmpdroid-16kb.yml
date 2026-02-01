@@ -1,4 +1,5 @@
-name: build-rtmpdroid-16kb
+name: rtmpdroid-16kb-aar
+
 on:
   workflow_dispatch:
 
@@ -8,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
