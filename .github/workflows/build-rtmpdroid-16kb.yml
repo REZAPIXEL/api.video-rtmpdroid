@@ -21,25 +21,83 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses
 
-      - name: Install NDK r28 + CMake
+      # ✅ نصب NDK r28 (هدف 16KB) + CMake
+      # ✅ نصب NDK 26 هم برای اینکه اگر پروژه جایی ndkVersion=26 داشت گیر نکنه
+      - name: Install NDKs + CMake
         run: |
-          yes | sdkmanager "ndk;28.0.13004108" "cmake;3.22.1"
+          yes | sdkmanager \
+            "ndk;28.0.13004108" \
+            "ndk;26.1.10909125" \
+            "cmake;3.22.1"
 
-      - name: Build Release AAR
+      # ✅ تلاش برای فورس کردن ndkVersion به r28 (اگر توی فایل‌ها تعریف شده باشد)
+      - name: Force ndkVersion to r28 (if defined)
         run: |
+          set -eux
+          echo "---- ndkVersion before ----"
+          grep -R --line-number "ndkVersion" . || true
+
+          find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
+            sed -i 's/ndkVersion[[:space:]]*["'\''][0-9.]*["'\'']/ndkVersion "28.0.13004108"/g' "$f" || true
+            sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\''][0-9.]*["'\'']/ndkVersion = "28.0.13004108"/g' "$f" || true
+          done
+
+          echo "---- ndkVersion after ----"
+          grep -R --line-number "ndkVersion" . || true
+
+      # ✅ بیلد را انجام می‌دهیم ولی اجازه می‌دهیم ادامه مراحل اجرا شود تا لاگ آپلود شود
+      - name: Build Release AAR (capture log)
+        id: build
+        continue-on-error: true
+        run: |
+          set +e
           chmod +x gradlew
-          ./gradlew :lib:assembleRelease --no-daemon --stacktrace
-          echo "---- AAR outputs ----"
-          ls -lah lib/build/outputs/aar
+          ./gradlew :lib:assembleRelease --no-daemon --stacktrace --info 2>&1 | tee gradle-build.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "GRADLE_EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
+          if [ "$EXIT_CODE" -eq 0 ]; then
+            echo "GRADLE_OK=true" >> $GITHUB_ENV
+          else
+            echo "GRADLE_OK=false" >> $GITHUB_ENV
+          fi
+          exit 0
 
-      - name: Prepare artifact
+      # ✅ تلاش برای پیدا کردن AAR (حتی اگر build fail شد، ممکنه فایل نیمه‌کاره ساخته شده باشه)
+      - name: Prepare AAR artifact (if exists)
+        if: always()
         run: |
-          mkdir -p out
-          cp lib/build/outputs/aar/*release*.aar out/rtmpdroid-1.2.1.aar
-          ls -lah out
+          set -eux
+          mkdir -p out || true
+          AAR_PATH=$(find . -path "*build/outputs/aar*" -name "*release*.aar" | head -n 1 || true)
+          if [ -n "$AAR_PATH" ]; then
+            echo "AAR_FOUND=true" >> $GITHUB_ENV
+            echo "Picked AAR: $AAR_PATH"
+            cp "$AAR_PATH" out/rtmpdroid-1.2.1.aar
+            ls -lah out
+          else
+            echo "AAR_FOUND=false" >> $GITHUB_ENV
+            echo "No AAR found."
+          fi
 
-      - name: Upload artifact
+      # ✅ لاگ همیشه آپلود شود
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: gradle-build.log
+
+      # ✅ اگر AAR موجود بود، آپلود شود
+      - name: Upload AAR
+        if: env.AAR_FOUND == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: rtmpdroid-1.2.1-16kb
           path: out/rtmpdroid-1.2.1.aar
+
+      # ✅ در نهایت اگر Gradle fail بود، job را fail کن (ولی artifacts قبلاً آپلود شده‌اند)
+      - name: Fail job if build failed
+        if: env.GRADLE_OK != 'true'
+        run: |
+          echo "Gradle failed with exit code: $GRADLE_EXIT_CODE"
+          exit 1
