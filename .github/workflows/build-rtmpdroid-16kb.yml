@@ -26,6 +26,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake make perl git unzip zip
 
+      # ✅ خیلی مهم: برای git am (patch step) باید identity ست شود
+      - name: Configure git identity (required for git am)
+        run: |
+          git config --global user.name "REZAPIXEL"
+          git config --global user.email "mohamadrezap.o@gmail.com"
+
+      # ✅ خیلی مهم: هرجا پروژه خواست از git.ffmpeg.org کلون کنه، به GitHub mirror هدایتش کن
+      - name: Rewrite rtmpdump URL globally (avoid git.ffmpeg.org 502)
+        run: |
+          git config --global url."https://github.com/rtmpdump/rtmpdump.git".insteadOf "http://git.ffmpeg.org/rtmpdump/"
+          git config --global url."https://github.com/rtmpdump/rtmpdump.git".insteadOf "http://git.ffmpeg.org/rtmpdump"
+          git config --global url."https://github.com/rtmpdump/rtmpdump.git".insteadOf "https://git.ffmpeg.org/rtmpdump/"
+          git config --global url."https://github.com/rtmpdump/rtmpdump.git".insteadOf "https://git.ffmpeg.org/rtmpdump"
+          git config --global url."https://github.com/rtmpdump/rtmpdump.git".insteadOf "git://git.ffmpeg.org/rtmpdump"
+
       - name: Install SDK/NDK/CMake
         run: |
           yes | sdkmanager --licenses
@@ -44,9 +59,7 @@ jobs:
           echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
           echo "CMAKE_DIR=${ANDROID_SDK_ROOT}/cmake/3.22.1" >> $GITHUB_ENV
 
-
-
-      # ✅ مهم‌ترین فیکس: حذف mismatch نسخه ndkVersion/ android.ndkVersion
+      # ✅ مهم‌ترین فیکس: حذف mismatch نسخه ndkVersion / android.ndkVersion
       - name: Force NDK version to 28 everywhere (no commit)
         run: |
           set -eux
@@ -61,23 +74,20 @@ jobs:
 
           # 2) build.gradle / build.gradle.kts: ndkVersion "26.x"  یا ndkVersion = "26.x"
           find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
-            # Groovy DSL: ndkVersion "26.1.10909125" or '26.1...'
             sed -i 's/ndkVersion[[:space:]]*["'\''"]26\.[0-9.]*["'\''"]/ndkVersion "28.0.13004108"/g' "$f" || true
-            # Kotlin DSL: ndkVersion = "26.1.10909125"
             sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\''"]26\.[0-9.]*["'\''"]/ndkVersion = "28.0.13004108"/g' "$f" || true
           done
 
           echo "---- AFTER: occurrences ----"
           grep -R --line-number -E "ndkVersion|android\.ndkVersion" . || true
 
-
-      - name: Patch rtmpdump download URL (fix ffmpeg 502)
+      # (اختیاری ولی بد نیست) اگر داخل سورس هم URL صریح بود، patch هم می‌کنیم
+      - name: Patch rtmpdump URL in project files (best-effort)
         run: |
           set -eux
           echo "---- Searching rtmpdump URL ----"
           grep -R --line-number -E "git\.ffmpeg\.org/rtmpdump|rtmpdump" lib || true
 
-          # Replace ffmpeg git URL with GitHub mirror (common patterns)
           find lib -type f \( -name "CMakeLists.txt" -o -name "*.cmake" \) -print0 | while IFS= read -r -d '' f; do
             sed -i 's|http://git\.ffmpeg\.org/rtmpdump/?|https://github.com/rtmpdump/rtmpdump.git|g' "$f" || true
             sed -i 's|https://git\.ffmpeg\.org/rtmpdump/?|https://github.com/rtmpdump/rtmpdump.git|g' "$f" || true
@@ -86,7 +96,6 @@ jobs:
 
           echo "---- After patch ----"
           grep -R --line-number -E "git\.ffmpeg\.org/rtmpdump|https://github.com/rtmpdump/rtmpdump\.git" lib || true
-     
 
       - name: Create local.properties (force sdk/ndk/cmake)
         run: |
@@ -113,8 +122,13 @@ jobs:
           set -eux
           mkdir -p out
           echo "---- AAR outputs ----"
-          find lib/build/outputs/aar -maxdepth 2 -type f -name "*.aar" -print
-          AAR_PATH=$(find lib/build/outputs/aar -maxdepth 2 -type f -name "*release*.aar" | head -n 1)
+          find lib/build/outputs/aar -maxdepth 2 -type f -name "*.aar" -print || true
+          AAR_PATH=$(find lib/build/outputs/aar -maxdepth 2 -type f -name "*release*.aar" | head -n 1 || true)
+          if [ -z "${AAR_PATH}" ]; then
+            echo "❌ No release AAR found!"
+            find lib/build -maxdepth 6 -type f -print || true
+            exit 1
+          fi
           echo "Picked: $AAR_PATH"
           cp "$AAR_PATH" out/rtmpdroid-1.2.1-16kb.aar
           ls -lah out
