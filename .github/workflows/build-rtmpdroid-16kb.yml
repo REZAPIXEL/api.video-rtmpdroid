@@ -44,6 +44,8 @@ jobs:
           echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
           echo "CMAKE_DIR=${ANDROID_SDK_ROOT}/cmake/3.22.1" >> $GITHUB_ENV
 
+
+
       # ✅ مهم‌ترین فیکس: حذف mismatch نسخه ndkVersion/ android.ndkVersion
       - name: Force NDK version to 28 everywhere (no commit)
         run: |
@@ -67,6 +69,24 @@ jobs:
 
           echo "---- AFTER: occurrences ----"
           grep -R --line-number -E "ndkVersion|android\.ndkVersion" . || true
+
+
+      - name: Patch rtmpdump download URL (fix ffmpeg 502)
+        run: |
+          set -eux
+          echo "---- Searching rtmpdump URL ----"
+          grep -R --line-number -E "git\.ffmpeg\.org/rtmpdump|rtmpdump" lib || true
+
+          # Replace ffmpeg git URL with GitHub mirror (common patterns)
+          find lib -type f \( -name "CMakeLists.txt" -o -name "*.cmake" \) -print0 | while IFS= read -r -d '' f; do
+            sed -i 's|http://git\.ffmpeg\.org/rtmpdump/?|https://github.com/rtmpdump/rtmpdump.git|g' "$f" || true
+            sed -i 's|https://git\.ffmpeg\.org/rtmpdump/?|https://github.com/rtmpdump/rtmpdump.git|g' "$f" || true
+            sed -i 's|git://git\.ffmpeg\.org/rtmpdump/?|https://github.com/rtmpdump/rtmpdump.git|g' "$f" || true
+          done
+
+          echo "---- After patch ----"
+          grep -R --line-number -E "git\.ffmpeg\.org/rtmpdump|https://github.com/rtmpdump/rtmpdump\.git" lib || true
+     
 
       - name: Create local.properties (force sdk/ndk/cmake)
         run: |
