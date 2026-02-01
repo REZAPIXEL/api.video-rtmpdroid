@@ -5,7 +5,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
     steps:
       - uses: actions/checkout@v4
 
@@ -14,90 +16,83 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
-
-      # ✅ نصب NDK r28 (هدف 16KB) + CMake
-      # ✅ نصب NDK 26 هم برای اینکه اگر پروژه جایی ndkVersion=26 داشت گیر نکنه
-      - name: Install NDKs + CMake
+      - name: Install host deps
         run: |
-          yes | sdkmanager \
-            "ndk;28.0.13004108" \
-            "ndk;26.1.10909125" \
-            "cmake;3.22.1"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake make perl git unzip zip
 
-      # ✅ تلاش برای فورس کردن ndkVersion به r28 (اگر توی فایل‌ها تعریف شده باشد)
-      - name: Force ndkVersion to r28 (if defined)
+      - name: Install SDK/NDK/CMake
         run: |
-          set -eux
-          echo "---- ndkVersion before ----"
-          grep -R --line-number "ndkVersion" . || true
+          yes | sdkmanager --licenses
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "cmake;3.22.1" \
+            "ndk;28.0.13004108"
 
-          find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' f; do
-            sed -i 's/ndkVersion[[:space:]]*["'\''][0-9.]*["'\'']/ndkVersion "28.0.13004108"/g' "$f" || true
-            sed -i 's/ndkVersion[[:space:]]*=[[:space:]]*["'\''][0-9.]*["'\'']/ndkVersion = "28.0.13004108"/g' "$f" || true
-          done
-
-          echo "---- ndkVersion after ----"
-          grep -R --line-number "ndkVersion" . || true
-
-      # ✅ بیلد را انجام می‌دهیم ولی اجازه می‌دهیم ادامه مراحل اجرا شود تا لاگ آپلود شود
-      - name: Build Release AAR (capture log)
-        id: build
-        continue-on-error: true
+      - name: Export paths (SDK/NDK/CMake)
         run: |
-          set +e
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
+          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
+          echo "CMAKE_DIR=${ANDROID_SDK_ROOT}/cmake/3.22.1" >> $GITHUB_ENV
+
+      # ✅ مهم‌ترین اصلاح: ساخت local.properties تا AGP/CMake دقیق NDK/CMake را پیدا کند
+      - name: Create local.properties (force sdk/ndk/cmake)
+        run: |
+          cat > local.properties <<EOF
+          sdk.dir=${ANDROID_SDK_ROOT}
+          ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108
+          cmake.dir=${ANDROID_SDK_ROOT}/cmake/3.22.1
+          EOF
+          cat local.properties
+
+      - name: Build Release AAR (forced injected dirs)
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
+          NINJAFLAGS: "-j2"
+          MAKEFLAGS: "-j2"
+        run: |
           chmod +x gradlew
-          ./gradlew :lib:assembleRelease --no-daemon --stacktrace --info 2>&1 | tee gradle-build.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          echo "GRADLE_EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
-          if [ "$EXIT_CODE" -eq 0 ]; then
-            echo "GRADLE_OK=true" >> $GITHUB_ENV
-          else
-            echo "GRADLE_OK=false" >> $GITHUB_ENV
-          fi
-          exit 0
+          ./gradlew :lib:assembleRelease \
+            --no-daemon --stacktrace --info \
+            -Dorg.gradle.workers.max=2 \
+            -Pandroid.injected.sdk.dir="${ANDROID_SDK_ROOT}" \
+            -Pandroid.injected.ndk.dir="${ANDROID_SDK_ROOT}/ndk/28.0.13004108" \
+            -Pandroid.injected.cmake.dir="${ANDROID_SDK_ROOT}/cmake/3.22.1"
 
-      # ✅ تلاش برای پیدا کردن AAR (حتی اگر build fail شد، ممکنه فایل نیمه‌کاره ساخته شده باشه)
-      - name: Prepare AAR artifact (if exists)
-        if: always()
+      - name: Prepare artifact
         run: |
           set -eux
-          mkdir -p out || true
-          AAR_PATH=$(find . -path "*build/outputs/aar*" -name "*release*.aar" | head -n 1 || true)
-          if [ -n "$AAR_PATH" ]; then
-            echo "AAR_FOUND=true" >> $GITHUB_ENV
-            echo "Picked AAR: $AAR_PATH"
-            cp "$AAR_PATH" out/rtmpdroid-1.2.1.aar
-            ls -lah out
-          else
-            echo "AAR_FOUND=false" >> $GITHUB_ENV
-            echo "No AAR found."
-          fi
+          mkdir -p out
+          echo "---- AAR outputs ----"
+          find lib/build/outputs/aar -maxdepth 2 -type f -name "*.aar" -print
+          AAR_PATH=$(find lib/build/outputs/aar -maxdepth 2 -type f -name "*release*.aar" | head -n 1)
+          echo "Picked: $AAR_PATH"
+          cp "$AAR_PATH" out/rtmpdroid-1.2.1-16kb.aar
+          ls -lah out
 
-      # ✅ لاگ همیشه آپلود شود
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: gradle-build.log
-
-      # ✅ اگر AAR موجود بود، آپلود شود
-      - name: Upload AAR
-        if: env.AAR_FOUND == 'true'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rtmpdroid-1.2.1-16kb
-          path: out/rtmpdroid-1.2.1.aar
+          path: out/rtmpdroid-1.2.1-16kb.aar
+          retention-days: 7
 
-      # ✅ در نهایت اگر Gradle fail بود، job را fail کن (ولی artifacts قبلاً آپلود شده‌اند)
-      - name: Fail job if build failed
-        if: env.GRADLE_OK != 'true'
-        run: |
-          echo "Gradle failed with exit code: $GRADLE_EXIT_CODE"
-          exit 1
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            lib/.cxx/**/*
+            **/build/reports/**/*
+          retention-days: 7
